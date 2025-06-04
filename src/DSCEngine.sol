@@ -2,6 +2,7 @@
 pragma solidity ^0.8.19;
 
 import {ReentrancyGuard} from "@openzeppelin/utils/ReentrancyGuard.sol";
+import {IERC20} from "@openzeppelin/token/ERC20/IERC20.sol";
 import {DecentralizedStableCoin} from "./DecentralizedStableCoin.sol";
 
 /**
@@ -27,6 +28,7 @@ contract DSCEngine is ReentrancyGuard {
     error DSCEngine__MustBeMoreThanZero();
     error DSCEngine__NotAllowedCollateral(address tokenCollateralAddress);
     error DSCEngine__TokenAddressesAndPriceFeedAddressesMustBeSameLength();
+    error DSCEngine__TransferFailed();
 
     ///////////////
     // STATE VARIABLES //
@@ -97,6 +99,9 @@ contract DSCEngine is ReentrancyGuard {
     {
         s_collateralDeposits[msg.sender][tokenCollateralAddress] += amountCollateral;
         emit CollateralDeposited(msg.sender, tokenCollateralAddress, amountCollateral);
+        bool success = IERC20(tokenCollateralAddress).transferFrom(msg.sender, address(this), amountCollateral);
+
+        require(success, DSCEngine__TransferFailed());
     }
 
     function redeemCollateral() external {}
