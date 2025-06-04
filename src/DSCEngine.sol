@@ -3,6 +3,7 @@ pragma solidity ^0.8.19;
 
 import {ReentrancyGuard} from "@openzeppelin/utils/ReentrancyGuard.sol";
 import {IERC20} from "@openzeppelin/token/ERC20/IERC20.sol";
+import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 import {DecentralizedStableCoin} from "./DecentralizedStableCoin.sol";
 
 /**
@@ -33,8 +34,12 @@ contract DSCEngine is ReentrancyGuard {
     ///////////////
     // STATE VARIABLES //
     ///////////////
+    uint256 private constant ADDITIONAL_FEED_PRECISION = 1e10;
+    uint256 private constant PRECISION = 1e18;
     mapping(address token => address priceFeed) private s_priceFeeds; // Maps token address to price feed address
     mapping(address user => mapping(address token => uint256 amount)) private s_collateralDeposits; // Maps user address to their collateral deposits
+    mapping(address user => uint256 amountDscMinted) private s_dscMinted; // Maps user address to the amount of DSC they have minted
+    address[] private s_allowedCollateralTokens; // List of allowed collateral tokens
 
     DecentralizedStableCoin private immutable i_dsc; // The stablecoin that this system manages
 
@@ -75,6 +80,7 @@ contract DSCEngine is ReentrancyGuard {
             }
 
             s_priceFeeds[tokenAddress] = priceFeed;
+            s_allowedCollateralTokens.push(tokenAddress);
         }
 
         i_dsc = DecentralizedStableCoin(dscAddress);
@@ -106,11 +112,78 @@ contract DSCEngine is ReentrancyGuard {
 
     function redeemCollateral() external {}
 
-    function mintDsc() external {}
+    /**
+     *
+     * @param amountDscToMint The amount of DSC to mint
+     * @notice This function mints DSC for the user, given that they have enough collateral deposited.
+     */
+    function mintDsc(uint256 amountDscToMint) external nonReentrant moreThanZero(amountDscToMint) {
+        s_dscMinted[msg.sender] += amountDscToMint;
+        _revertIfHealthFactorIsBroken(msg.sender);
+    }
 
     function burnDsc() external {}
 
     function liquidate() external {}
 
     function getHealthFactor() external view {}
+
+    ///////////////
+    // PRIVATE & INTERNAL VIEW FUNCTIONS //
+    ///////////////
+
+    function _getAccountInformation(address user)
+        private
+        view
+        returns (uint256 totalDscMinted, uint256 totalCollateralValue)
+    {
+        // 1. Get the total amount of DSC minted by the user
+        // 2. Get the total value of collateral deposited by the user
+        // 3. Return both values
+        totalDscMinted = s_dscMinted[user];
+        totalCollateralValue = getAccountCollateralValue(user);
+    }
+
+    /**
+     * @notice Calculates the health factor for a user.
+     * @param user The address of the user to calculate the health factor for.
+     * @return How close the user is to liquidation.
+     */
+    function _healthFactor(address user) internal view returns (uint256) {
+        // 1. Get the total value of collateral
+        // 2. Get the total value of DSC minted
+        // 3. Calculate health factor = total collateral value / total DSC value
+        // 4. Return health factor
+        (uint256 totalDscMinted, uint256 totalCollateralValue) = _getAccountInformation(user);
+    }
+
+    function _revertIfHealthFactorIsBroken(address user) internal view {
+        // 1. Check health factor
+        // 2. Revert if health factor is broken
+    }
+
+    ///////////////
+    // PUBLIC & EXTERNAL VIEW FUNCTIONS //
+    ///////////////
+    function getUsdValue(address tokenAddress, uint256 amount) public view returns (uint256) {
+        AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[tokenAddress]);
+        (, int256 price,,,) = priceFeed.latestRoundData();
+
+        return ((uint256(price) * ADDITIONAL_FEED_PRECISION) * amount) / PRECISION;
+    }
+
+    function getAccountCollateralValue(address user) public view returns (uint256 totalCollateralValueInUsd) {
+        uint256 allowedCollateralTokens = s_allowedCollateralTokens.length;
+        for (uint256 i = 0; i < allowedCollateralTokens; i++) {
+            address tokenAddress = s_allowedCollateralTokens[i];
+            uint256 amountCollateral = s_collateralDeposits[user][tokenAddress];
+            if (amountCollateral > 0) {
+                // Get the price of the collateral token in USD
+                uint256 collateralValueInUsd = getUsdValue(tokenAddress, amountCollateral);
+                totalCollateralValueInUsd += collateralValueInUsd;
+            }
+        }
+
+        return totalCollateralValueInUsd;
+    }
 }
